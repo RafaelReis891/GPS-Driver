@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Preview GPS Carrinho</title>
+<style>
+  body { font-family: Arial; padding: 20px; }
+  #info { margin-top: 20px; }
+</style>
+</head>
+<body>
+<h1>Preview GPS Carrinho</h1>
+
+<label>Latitude: <input type="number" id="lat" value="-23.5002" step="0.0001"></label><br>
+<label>Longitude: <input type="number" id="lon" value="-46.6005" step="0.0001"></label><br>
+<button onclick="calcular()">Calcular ângulo</button>
+
+<div id="info"></div>
+
+<script>
+let rota = [];
+
+fetch('/rota')
+    .then(res => res.json())
+    .then(data => { rota = data; });
+
+function azimute(lat1, lon1, lat2, lon2) {
+    let phi1 = lat1 * Math.PI/180;
+    let phi2 = lat2 * Math.PI/180;
+    let delta_lon = (lon2 - lon1) * Math.PI/180;
+    
+    let x = Math.sin(delta_lon) * Math.cos(phi2);
+    let y = Math.cos(phi1)*Math.sin(phi2) - Math.sin(phi1)*Math.cos(phi2)*Math.cos(delta_lon);
+    
+    let theta = Math.atan2(x, y);
+    let az = (theta * 180/Math.PI + 360) % 360;
+    return az;
+}
+
+function calcular() {
+    const lat = parseFloat(document.getElementById('lat').value);
+    const lon = parseFloat(document.getElementById('lon').value);
+    
+    let info = '';
+    rota.forEach((p, i) => {
+        let ang = azimute(lat, lon, p.lat, p.lon);
+        info += `Waypoint ${i+1}: direção = ${ang.toFixed(2)}°<br>`;
+    });
+    document.getElementById('info').innerHTML = info;
+}
+</script>
+</body>
+</html>
