@@ -14,7 +14,6 @@
 
   #map { height: 45%; }
 
-  /* Área estilo APP */
   #panel {
     height: 55%;
     background: #181818;
@@ -29,7 +28,6 @@
     font-size: 18px;
   }
 
-  /* Volante/ponteiro */
   #wheelBox {
     margin: 0 auto;
     width: 160px;
@@ -88,18 +86,9 @@
   <div class="row">
     <span>Waypoint:</span> <span id="wp">--</span>
   </div>
-  
+
   <br>
 
-  <!-- Distancia Ajustavel -->
-<div class="row">
-    <span>Distância mínima:</span> 
-    <span><span id="minDistLabel">10</span> m</span>
-</div>
-<input type="range" id="minDist" min="1" max="20" value="10" step="1" style="width:100%; margin-bottom:15px;">
-
-
-  <!-- Ponteiro / volante -->
   <div id="wheelBox">
       <div id="wheelPointer"></div>
       <div class="center_dot"></div>
@@ -112,9 +101,9 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 
-// --------------------------
-// MATEMÁTICA
-// --------------------------
+// ----------------------------------------------
+// Funções matemáticas
+// ----------------------------------------------
 const toRad = v => v * Math.PI/180;
 const toDeg = v => v * 180/Math.PI;
 
@@ -142,51 +131,42 @@ function bearingTo(lat1, lon1, lat2, lon2){
     return (toDeg(Math.atan2(y,x)) + 360) % 360;
 }
 
-// --------------------------
-// VARIÁVEIS
-// --------------------------
+// LERP angular estável
+function lerpAngle(a, b, t){
+    let diff = ((b - a + 540) % 360) - 180;
+    return (a + diff * t + 360) % 360;
+}
+
+// ----------------------------------------------
+// Variáveis principais
+// ----------------------------------------------
 let rota = [];
 let currentWP = 0;
 let map, marker, arrowLine;
-let heading = 0;
-let minDistance = 10;
 
-// --------------------------
-// EVENTOS
-// --------------------------
-document.getElementById("minDist").addEventListener("input", e => {
-    minDistance = Number(e.target.value);
-    document.getElementById("minDistLabel").textContent = minDistance;
-});
+let lastLat = null;
+let lastLon = null;
 
+let internalHeading = 0;  // direção interna suave
+let initializedHeading = false;
 
-// --------------------------
-// PEGA ROTA
-// --------------------------
+// ----------------------------------------------
+// Carrega rota
+// ----------------------------------------------
 fetch('/rota')
     .then(r => r.json())
-    .then(r => { rota = r; init(); });
+    .then(data => { rota = data; init(); });
 
-// --------------------------
-// HEADING DO CELULAR
-// --------------------------
-if (window.DeviceOrientationEvent) {
-    window.addEventListener("deviceorientation", ev => {
-        if (ev.alpha != null) {
-            heading = 360 - ev.alpha;
-        }
-    });
-}
-
-// --------------------------
-// MAPA
-// --------------------------
+// ----------------------------------------------
+// Inicializa mapa
+// ----------------------------------------------
 function init(){
     map = L.map('map').setView([rota[0].lat, rota[0].lon], 18);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-    const latlngs = rota.map(p => [p.lat,p.lon]);
-    L.polyline(latlngs,{color:'blue'}).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png')
+        .addTo(map);
+
+    L.polyline(rota.map(p => [p.lat,p.lon]), {color:'blue'}).addTo(map);
 
     marker = L.marker([rota[0].lat,rota[0].lon]).addTo(map);
 
@@ -195,9 +175,9 @@ function init(){
     track();
 }
 
-// --------------------------
-// GPS + DIREÇÃO
-// --------------------------
+// ----------------------------------------------
+// Rastreamento GPS + heading interno
+// ----------------------------------------------
 function track(){
     navigator.geolocation.watchPosition(pos => {
 
@@ -210,28 +190,49 @@ function track(){
         document.getElementById('lat').textContent = lat.toFixed(6);
         document.getElementById('lon').textContent = lon.toFixed(6);
 
-        // ponto alvo
+        // -------------------------------------
+        // Atualiza heading interno baseado no movimento REAL
+        // -------------------------------------
+        if (lastLat !== null) {
+
+            const distMoved = distance(lastLat, lastLon, lat, lon);
+
+            if (distMoved > 0.5) { // só atualiza se realmente andou
+                const rawHeading = bearingTo(lastLat, lastLon, lat, lon);
+
+                if (!initializedHeading) {
+                    internalHeading = rawHeading;
+                    initializedHeading = true;
+                } else {
+                    internalHeading = lerpAngle(internalHeading, rawHeading, 0.15);
+                }
+            }
+        }
+
+        lastLat = lat;
+        lastLon = lon;
+
+        // -------------------------------------
+        // Cálculo de direção para o próximo waypoint
+        // -------------------------------------
         const wp = rota[currentWP];
         const dist = distance(lat, lon, wp.lat, wp.lon);
+
         document.getElementById('dist').textContent = dist.toFixed(1);
         document.getElementById('wp').textContent = currentWP + 1;
 
-        // Bearing até o ponto
-        const bearing = bearingTo(lat, lon, wp.lat, wp.lon);
+        const desiredBearing = bearingTo(lat, lon, wp.lat, wp.lon);
 
-        // Diferença angular
-        let delta = bearing - heading;
+        let delta = desiredBearing - internalHeading;
         if (delta > 180) delta -= 360;
         if (delta < -180) delta += 360;
 
-        // Limite físico do carrinho
+        // Limita como volante real
         let steering = Math.max(-40, Math.min(40, delta));
 
-        // Atualiza o ponteiro
         document.getElementById("wheelPointer").style.transform =
             `rotate(${steering}deg)`;
 
-        // Texto
         if (steering > 2)
             document.getElementById("dirText").textContent =
                 `Vire para ➜ DIREITA (${steering.toFixed(1)}°)`;
@@ -242,18 +243,17 @@ function track(){
             document.getElementById("dirText").textContent =
                 `Siga em FRENTE (0°)`;
 
-        // Seta no mapa
+        // seta no mapa
         arrowLine.setLatLngs([
-            [lat,lon],
+            [lat, lon],
             [wp.lat, wp.lon]
         ]);
 
-        // Troca waypoint
-        if (dist < minDistance && currentWP < rota.length-1)
+        // troca waypoint automaticamente
+        if (dist < 10 && currentWP < rota.length - 1)
             currentWP++;
 
-
-    }, console.error, {
+    }, console.warn, {
         enableHighAccuracy:true,
         maximumAge:300,
         timeout:5000
